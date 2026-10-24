@@ -21,15 +21,30 @@ print(f"[+] Client connected from {client_address}")
 
 client_socket.setblocking(False)
 current_input = ""
+rx_buffer = b""
+expected_length = None
+
 print("[Server]: ", end="", flush=True)
 
 while True:
     try:
-        encrypted_data = client_socket.recv(4096)
-        if not encrypted_data:
+        chunk = client_socket.recv(4096)
+        if not chunk:
             print("\n[+] Client disconnected")
             break
-        
+        rx_buffer += chunk
+    except BlockingIOError:
+        pass
+
+    if expected_length is None and len(rx_buffer) >= 4:
+        expected_length = int.from_bytes(rx_buffer[:4], 'big')
+        rx_buffer = rx_buffer[4:]
+
+    if expected_length is not None and len(rx_buffer) >= expected_length:
+        encrypted_data = rx_buffer[:expected_length]
+        rx_buffer = rx_buffer[expected_length:]
+        expected_length = None  
+
         try:
             decrypted_message = cipher.decrypt(encrypted_data).decode('utf-8')
             if decrypted_message.lower() == 'exit':
@@ -37,10 +52,7 @@ while True:
                 break
             print(f"\r[client]: {decrypted_message}\n[Server]: {current_input}", end="", flush=True)
         except Exception:
-            print(f"\r[!] Warning: Received unreadable/encrypted packet\n[Server]: {current_input}", end="", flush=True)
-            
-    except BlockingIOError:
-        pass
+            print(f"\r[!] Warning: Decryption failed\n[Server]: {current_input}", end="", flush=True)
 
     if msvcrt.kbhit():
         char = msvcrt.getch()
@@ -51,7 +63,8 @@ while True:
                 break
             
             encrypted_msg = cipher.encrypt(current_input.encode('utf-8'))
-            client_socket.send(encrypted_msg)
+            msg_length = len(encrypted_msg).to_bytes(4, 'big')
+            client_socket.sendall(msg_length + encrypted_msg)
             
             current_input = ""
             print("[Server]: ", end="", flush=True)
@@ -63,10 +76,10 @@ while True:
                 
         else:
             try:
-                decoded_char = char.decode('utf-8')
+                decoded_char = char.decode('utf-8', errors='ignore')
                 current_input += decoded_char
                 print(decoded_char, end="", flush=True)
-            except UnicodeDecodeError:
+            except Exception:
                 pass
 
 client_socket.close()
